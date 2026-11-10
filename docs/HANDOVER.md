@@ -11,8 +11,7 @@
 
 きっかけは X で見かけた three.js のガラス表現の動画。「これを自分で再現してみる」という流れで、Claude と対話しながら1日で作った。
 
-- 公開中のプレビュー（claude.ai のアーティファクト、本人のみ閲覧可）：https://claude.ai/artifact/NZ4RoYoCMWgADwTQpGVAZF
-- このリポジトリの `index.html` は、上のプレビューと同じ内容。
+- 公開ページ（GitHub Pages）：<https://karuru6225.github.io/threejs-glass/>
 
 ## 2. 現状のステータス
 
@@ -20,15 +19,17 @@
 | --- | --- |
 | 動作 | `index.html` 単体（CDN の importmap）と Vite（`npm run dev`）の両方で動く。`vite build` も通る |
 | 検証 | **GPU のないヘッドレス Chrome（SwiftShader）でのスクリーンショット確認のみ。** 実機 GPU での見た目と FPS は未確認 |
-| git | ローカルで初期コミット済み（`main`） |
-| GitHub | **未作成。** `karuru6225/threejs-glass`（private）を作って push する予定（作業手順は 7 章） |
+| GitHub | `karuru6225/threejs-glass`（public） |
+| 公開 | `main` への push で GitHub Actions がビルドし、`gh-pages` ブランチ経由で GitHub Pages に出る |
 
 ## 3. ファイル構成
 
 ```
 index.html              本体。HTML / CSS / JS（three.js）が全部この1ファイルに入っている（約1250行）
 package.json            vite + three@0.170.0
-vite.config.js          チャンクサイズ警告の閾値を上げているだけ
+vite.config.js          チャンクサイズ警告の閾値と、Actions 実行時の base（/threejs-glass/）
+.github/workflows/      GitHub Pages へのデプロイ（deploy.yml）
+.node-version           CI で使う Node のバージョン
 README.md               使い方と仕組みの概要
 tools/traffic-sim.mjs   交通ロジックの回帰チェック（npm run sim:traffic）
 docs/HANDOVER.md        この資料
@@ -122,18 +123,13 @@ docs/HANDOVER.md        この資料
 
 ## 7. 未完了・次にやること
 
-1. **GitHub に上げる**：`karuru6225/threejs-glass` を private で作って push する。Windows の gh が使えるなら、次の1行で済む。
-   ```sh
-   gh repo create karuru6225/threejs-glass --private --source . --remote origin --push
-   ```
-   なお、Claude 側の環境は gh トークンが無効で、内蔵ブラウザも GitHub に未ログインだったため、ここは止まっている。
-2. **実機で確認する**：見た目と FPS を確かめる。特にスマホ。重い場合は次の順に削るとよい。
+1. **実機で確認する**：見た目と FPS を確かめる。特にスマホ。重い場合は次の順に削るとよい。
    1. GTAO を外す
    2. 影の mapSize を下げる
    3. ガラスのタップ数（N=24）を減らす
    4. DPR の上限（1.5）を下げる
-3. **ファイルを分割する**：`index.html` が大きいので、`src/` に分けるとよい（glass / city / plants / room / controls / main）。Vite で動く状態なので分けやすい。
-4. **窓プローブのフォールバック**：float RT を `readPixels` で読むには `EXT_color_buffer_float` が必要。読めない環境では `probeOk=false` になって窓の光が黒いままになる。HalfFloat で読む（`Uint16Array`）か、固定色にフォールバックする処理を入れたい。
+2. **ファイルを分割する**：`index.html` が大きいので、`src/` に分けるとよい（glass / city / plants / room / controls / main）。Vite で動く状態なので分けやすい。
+3. **窓プローブのフォールバック**：float RT を `readPixels` で読むには `EXT_color_buffer_float` が必要。読めない環境では `probeOk=false` になって窓の光が黒いままになる。HalfFloat で読む（`Uint16Array`）か、固定色にフォールバックする処理を入れたい。
 
 ## 8. 既知の問題・制約
 
