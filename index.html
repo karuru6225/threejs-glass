@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>網入り型板ガラス — three.js</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #0b120b; overflow: hidden; font-family: system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif; color: #e8efe6; }
+  canvas { display: block; width: 100vw; height: 100vh; touch-action: none; }
+  #panel { position: fixed; left: 14px; bottom: 14px; width: 250px; padding: 12px 14px 10px; background: rgba(10, 16, 10, 0.72); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; font-size: 12px; user-select: none; }
+  #panel h1 { font-size: 13px; font-weight: 600; margin: 0 0 8px; letter-spacing: 0.02em; }
+  .row { display: grid; grid-template-columns: 84px 1fr 30px; align-items: center; gap: 6px; margin: 5px 0; }
+  .row span:last-child { text-align: right; opacity: 0.7; font-variant-numeric: tabular-nums; }
+  input[type=range] { width: 100%; accent-color: #9ccc65; }
+  .btns { display: flex; gap: 6px; margin-top: 8px; }
+  button { flex: 1; font: inherit; color: inherit; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.12); border-radius: 8px; padding: 6px 4px; cursor: pointer; }
+  button:hover { background: rgba(255,255,255,0.14); }
+  button.on { background: rgba(156, 204, 101, 0.25); border-color: rgba(156, 204, 101, 0.5); }
+  #how { display: none; margin-top: 8px; line-height: 1.55; opacity: 0.85; }
+  #how.open { display: block; }
+  #how b { color: #c5e1a5; font-weight: 600; }
+  #hint { position: fixed; right: 14px; bottom: 14px; font-size: 11px; opacity: 0.5; }
+  #pad { position: fixed; right: 16px; bottom: 34px; display: none; grid-template-columns: repeat(3, 48px); grid-template-rows: repeat(2, 48px); gap: 6px; }
+  #pad button { font-size: 16px; padding: 0; }
+  #pad [data-k=f] { grid-column: 2; } #pad [data-k=l] { grid-column: 1; grid-row: 2; } #pad [data-k=b] { grid-column: 2; grid-row: 2; } #pad [data-k=r] { grid-column: 3; grid-row: 2; }
+  @media (pointer: coarse) { #pad { display: grid; } #hint { display: none; } }
+  #err { position: fixed; inset: 0; display: none; place-items: center; text-align: center; padding: 24px; }
+</style>
+<script type="importmap">
+{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.min.js", "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/" } }
+</script>
+  <script type="module" crossorigin src="/threejs-glass/assets/index-B7ARq9oE.js"></script>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="panel">
+  <h1>網入り型板ガラス</h1>
+  <div class="btns" style="margin:0 0 8px"><button id="sCity">夜の街</button><button id="sPlants">植物</button></div>
+  <div class="row"><label for="refract">屈折</label><input id="refract" type="range" min="0" max="2" step="0.01" value="1.17"><span id="refractV">1.00</span></div>
+  <div class="row"><label for="scale">模様の細かさ</label><input id="scale" type="range" min="40" max="400" step="1" value="293"><span id="scaleV">170</span></div>
+  <div class="row"><label for="blur">ぼかし</label><input id="blur" type="range" min="0" max="2" step="0.01" value="0.26"><span id="blurV">1.00</span></div>
+  <div class="row"><label for="dist">景色の距離</label><input id="dist" type="range" min="0" max="1.5" step="0.01" value="0"><span id="distV">0.00</span></div>
+  <div class="btns">
+    <button id="wire" class="on">網</button>
+    <button id="peek">押してガラスを外す</button>
+    <button id="lampBtn">照明</button>
+    <button id="howBtn">仕組み</button>
+  </div>
+  <div id="how">
+    <b>① 屈折</b> ガラスの凹凸（ノイズで作った高さ）の傾きから、奥の景色を読む位置をずらす。ずれ幅は<b>ガラスから物体までの距離に比例</b>。<br>
+    <b>② ぼけ</b> 深度バッファで距離を測り、遠いものほど広い範囲を平均。各サンプル自身のぼけ半径も見て、ガラスに近い葉がにじみ出さないようにしている。<br>
+    <b>③ 網</b> ガラスの中にあるので、ぼけずに少しだけ揺らぐ。<br>
+    「景色の距離」を動かすと、同じものが遠ざかるにつれて溶けていくのが分かります。夜の街では、明るい光がガラスの中で広く散る「にじみ」も足しています。
+  </div>
+</div>
+<div id="hint">WASD／矢印キーで移動（Shiftで速く）・ドラッグで見回す</div>
+<div id="pad"><button data-k="f">▲</button><button data-k="l">◀</button><button data-k="b">▼</button><button data-k="r">▶</button></div>
+<div id="err">WebGL2 が使えない環境のため表示できません。</div>
+
+
+</body>
+</html>
