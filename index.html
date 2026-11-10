@@ -1,0 +1,1246 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>網入り型板ガラス — three.js</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #0b120b; overflow: hidden; font-family: system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif; color: #e8efe6; }
+  canvas { display: block; width: 100vw; height: 100vh; touch-action: none; }
+  #panel { position: fixed; left: 14px; bottom: 14px; width: 250px; padding: 12px 14px 10px; background: rgba(10, 16, 10, 0.72); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; font-size: 12px; user-select: none; }
+  #panel h1 { font-size: 13px; font-weight: 600; margin: 0 0 8px; letter-spacing: 0.02em; }
+  .row { display: grid; grid-template-columns: 84px 1fr 30px; align-items: center; gap: 6px; margin: 5px 0; }
+  .row span:last-child { text-align: right; opacity: 0.7; font-variant-numeric: tabular-nums; }
+  input[type=range] { width: 100%; accent-color: #9ccc65; }
+  .btns { display: flex; gap: 6px; margin-top: 8px; }
+  button { flex: 1; font: inherit; color: inherit; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.12); border-radius: 8px; padding: 6px 4px; cursor: pointer; }
+  button:hover { background: rgba(255,255,255,0.14); }
+  button.on { background: rgba(156, 204, 101, 0.25); border-color: rgba(156, 204, 101, 0.5); }
+  #how { display: none; margin-top: 8px; line-height: 1.55; opacity: 0.85; }
+  #how.open { display: block; }
+  #how b { color: #c5e1a5; font-weight: 600; }
+  #hint { position: fixed; right: 14px; bottom: 14px; font-size: 11px; opacity: 0.5; }
+  #pad { position: fixed; right: 16px; bottom: 34px; display: none; grid-template-columns: repeat(3, 48px); grid-template-rows: repeat(2, 48px); gap: 6px; }
+  #pad button { font-size: 16px; padding: 0; }
+  #pad [data-k=f] { grid-column: 2; } #pad [data-k=l] { grid-column: 1; grid-row: 2; } #pad [data-k=b] { grid-column: 2; grid-row: 2; } #pad [data-k=r] { grid-column: 3; grid-row: 2; }
+  @media (pointer: coarse) { #pad { display: grid; } #hint { display: none; } }
+  #err { position: fixed; inset: 0; display: none; place-items: center; text-align: center; padding: 24px; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="panel">
+  <h1>網入り型板ガラス</h1>
+  <div class="btns" style="margin:0 0 8px"><button id="sCity">夜の街</button><button id="sPlants">植物</button></div>
+  <div class="row"><label for="refract">屈折</label><input id="refract" type="range" min="0" max="2" step="0.01" value="1.17"><span id="refractV">1.00</span></div>
+  <div class="row"><label for="scale">模様の細かさ</label><input id="scale" type="range" min="40" max="400" step="1" value="293"><span id="scaleV">170</span></div>
+  <div class="row"><label for="blur">ぼかし</label><input id="blur" type="range" min="0" max="2" step="0.01" value="0.26"><span id="blurV">1.00</span></div>
+  <div class="row"><label for="dist">景色の距離</label><input id="dist" type="range" min="0" max="1.5" step="0.01" value="0"><span id="distV">0.00</span></div>
+  <div class="btns">
+    <button id="wire" class="on">網</button>
+    <button id="peek">押してガラスを外す</button>
+    <button id="lampBtn">照明</button>
+    <button id="howBtn">仕組み</button>
+  </div>
+  <div id="how">
+    <b>① 屈折</b> ガラスの凹凸（ノイズで作った高さ）の傾きから、奥の景色を読む位置をずらす。ずれ幅は<b>ガラスから物体までの距離に比例</b>。<br>
+    <b>② ぼけ</b> 深度バッファで距離を測り、遠いものほど広い範囲を平均。各サンプル自身のぼけ半径も見て、ガラスに近い葉がにじみ出さないようにしている。<br>
+    <b>③ 網</b> ガラスの中にあるので、ぼけずに少しだけ揺らぐ。<br>
+    「景色の距離」を動かすと、同じものが遠ざかるにつれて溶けていくのが分かります。夜の街では、明るい光がガラスの中で広く散る「にじみ」も足しています。
+  </div>
+</div>
+<div id="hint">WASD／矢印キーで移動（Shiftで速く）・ドラッグで見回す</div>
+<div id="pad"><button data-k="f">▲</button><button data-k="l">◀</button><button data-k="b">▼</button><button data-k="r">▶</button></div>
+<div id="err">WebGL2 が使えない環境のため表示できません。</div>
+
+<script type="importmap">
+{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.min.js", "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/" } }
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { RectAreaLightUniformsLib } from 'three/addons/lights/RectAreaLightUniformsLib.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+
+const canvas = document.getElementById('c');
+let renderer;
+try {
+  renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
+} catch (e) {
+  document.getElementById('err').style.display = 'grid';
+  throw e;
+}
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
+const DPR = Math.min(window.devicePixelRatio || 1, 1.5);
+renderer.setPixelRatio(DPR);
+
+// ---------------------------------------------------------------- camera
+const camera = new THREE.PerspectiveCamera(40, 1, 0.05, 45);
+camera.position.set(0, 0, 2.2);
+
+// ---------------------------------------------------------------- plant scene
+const scene = new THREE.Scene();
+scene.fog = new THREE.Fog(0x1e2f1a, 3.5, 10);
+scene.add(new THREE.HemisphereLight(0xe6ffd8, 0x12200e, 0.9));
+const sun = new THREE.DirectionalLight(0xfff1d0, 2.6);
+sun.position.set(2, 3, -2);
+scene.add(sun);
+const fill = new THREE.DirectionalLight(0xbfe3ff, 0.6);
+fill.position.set(-1, 0.5, 2);
+scene.add(fill);
+
+// backdrop: bright gaps of sky through foliage
+const backdrop = new THREE.Mesh(
+  new THREE.PlaneGeometry(30, 20),
+  new THREE.ShaderMaterial({
+    fog: false,
+    vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
+    fragmentShader: `
+      varying vec2 vUv;
+      float h(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7))) * 43758.5453); }
+      float n(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);
+        return mix(mix(h(i),h(i+vec2(1,0)),f.x), mix(h(i+vec2(0,1)),h(i+vec2(1,1)),f.x), f.y); }
+      void main(){
+        vec2 p = vUv;
+        vec3 col = mix(vec3(0.015,0.03,0.012), vec3(0.06,0.11,0.04), p.y);
+        float gaps = smoothstep(0.55, 0.85, n(p*vec2(22.0,14.0)) * 0.6 + n(p*vec2(55.0,36.0)) * 0.4);
+        float sky = smoothstep(0.35, 0.95, p.y) * smoothstep(0.2, 0.8, p.x);
+        col += vec3(1.6, 1.8, 1.3) * gaps * sky * 1.6;
+        gl_FragColor = vec4(col, 1.0);
+      }`,
+  })
+);
+backdrop.position.z = -7;
+scene.add(backdrop);
+
+// leaf geometry (unit length, pointing +y)
+function leafGeometry() {
+  const s = new THREE.Shape();
+  s.moveTo(0, 0);
+  s.quadraticCurveTo(0.42, 0.35, 0, 1);
+  s.quadraticCurveTo(-0.42, 0.35, 0, 0);
+  const g = new THREE.ShapeGeometry(s, 8);
+  // slight fold along the midrib
+  const pos = g.attributes.position;
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i), y = pos.getY(i);
+    pos.setZ(i, Math.abs(x) * 0.35 + Math.sin(y * Math.PI) * 0.06);
+  }
+  g.computeVertexNormals();
+  return g;
+}
+const LEAF = leafGeometry();
+
+const timeUniform = { value: 0 };
+function leafMaterial() {
+  const m = new THREE.MeshStandardMaterial({ side: THREE.DoubleSide, roughness: 0.55, metalness: 0.0 });
+  m.onBeforeCompile = (sh) => {
+    sh.uniforms.uTime = timeUniform;
+    sh.vertexShader = 'uniform float uTime;\n' + sh.vertexShader.replace(
+      '#include <begin_vertex>',
+      `#include <begin_vertex>
+       vec3 ip = vec3(instanceMatrix[3][0], instanceMatrix[3][1], instanceMatrix[3][2]);
+       float ph = ip.x * 3.1 + ip.y * 2.3 + ip.z * 1.7;
+       transformed.z += sin(uTime * 1.6 + ph) * 0.12 * position.y;
+       transformed.x += sin(uTime * 0.9 + ph * 1.3) * 0.05 * position.y;`
+    );
+  };
+  return m;
+}
+
+const rand = (a, b) => a + Math.random() * (b - a);
+const plants = new THREE.Group();
+scene.add(plants);
+const bushes = [];
+
+function makeBush({ x, y, z, rx, ry, rz, count, size, light = 0.28, hue = 0.26 }) {
+  const mesh = new THREE.InstancedMesh(LEAF, leafMaterial(), count);
+  const m = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler();
+  const p = new THREE.Vector3(), sc = new THREE.Vector3(), c = new THREE.Color();
+  for (let i = 0; i < count; i++) {
+    const u = Math.random() * Math.PI * 2, v = Math.acos(rand(-1, 1)), r = Math.cbrt(rand(0.25, 1));
+    p.set(Math.sin(v) * Math.cos(u) * rx * r, Math.cos(v) * ry * r, Math.sin(v) * Math.sin(u) * rz * r);
+    // leaves point outward-ish
+    e.set(rand(-1.2, 0.6), rand(-Math.PI, Math.PI), Math.atan2(-p.x, p.y) + rand(-0.7, 0.7));
+    q.setFromEuler(e);
+    const s = size * rand(0.7, 1.3);
+    sc.set(s, s, s);
+    m.compose(p, q, sc);
+    mesh.setMatrixAt(i, m);
+    const lift = (p.y / ry) * 0.08;
+    c.setHSL(hue + rand(-0.04, 0.05), rand(0.45, 0.8), Math.max(0.05, light + lift + rand(-0.1, 0.1)));
+    if (Math.random() < 0.08) c.setHSL(0.17 + rand(0, 0.05), 0.75, 0.5); // a few young yellow leaves
+    mesh.setColorAt(i, c);
+  }
+  const g = new THREE.Group();
+  g.position.set(x, y, z);
+  g.add(mesh);
+  g.userData.phase = Math.random() * 10;
+  plants.add(g);
+  bushes.push(g);
+}
+
+// far layer
+for (let i = 0; i < 9; i++) makeBush({ x: rand(-3.5, 3.5), y: rand(-1.5, 0.6), z: rand(-5.5, -4), rx: rand(0.8, 1.4), ry: rand(0.7, 1.2), rz: 0.6, count: 260, size: 0.22, light: 0.16 });
+// middle
+for (let i = 0; i < 8; i++) makeBush({ x: rand(-2.0, 2.0), y: rand(-1.0, 0.3), z: rand(-3, -1.6), rx: rand(0.5, 0.8), ry: rand(0.45, 0.7), rz: 0.45, count: 300, size: 0.15, light: 0.24 });
+// near
+makeBush({ x: 0.55, y: 0.15, z: -0.75, rx: 0.45, ry: 0.4, rz: 0.3, count: 260, size: 0.1, light: 0.32 });
+makeBush({ x: -0.6, y: -0.35, z: -0.55, rx: 0.4, ry: 0.35, rz: 0.25, count: 240, size: 0.09, light: 0.3, hue: 0.24 });
+makeBush({ x: 0.05, y: -0.75, z: -1.0, rx: 0.6, ry: 0.35, rz: 0.3, count: 260, size: 0.11, light: 0.27 });
+// leaves pressed right against the glass
+makeBush({ x: -0.55, y: 0.45, z: -0.09, rx: 0.28, ry: 0.22, rz: 0.06, count: 70, size: 0.075, light: 0.34, hue: 0.25 });
+makeBush({ x: 0.75, y: -0.5, z: -0.12, rx: 0.3, ry: 0.25, rz: 0.08, count: 80, size: 0.08, light: 0.3, hue: 0.27 });
+
+// ---------------------------------------------------------------- night city scene
+const city = new THREE.Scene();
+city.background = new THREE.Color(0x010101);
+const cityContent = new THREE.Group();
+city.add(cityContent);
+const GROUND = -1.3;
+const EDGE = 2.6; // building line (street is 2*EDGE wide)
+// Our room sits in the building on the +x side of the street, at street position z = SLOT_Z.
+// Nothing is mounted on the outside of our own window.
+const SLOT_Z = -19, SLOT_HALF = 1.4;
+const inSlot = (s, zc) => s === 1 && Math.abs(zc - SLOT_Z) < SLOT_HALF;
+
+// sky with a warm city glow at the horizon
+const sky = new THREE.Mesh(
+  new THREE.PlaneGeometry(120, 60),
+  new THREE.ShaderMaterial({
+    vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
+    fragmentShader: `
+      varying vec2 vUv;
+      void main(){
+        float y = vUv.y - 0.5;
+        // Kabukicho reference: the sky is practically black
+        vec3 col = vec3(0.006, 0.006, 0.008) + vec3(0.03, 0.02, 0.02) * exp(-abs(y) * 30.0);
+        if (y < 0.0) col = vec3(0.004); // wet asphalt below the horizon
+        gl_FragColor = vec4(col, 1.0);
+      }`,
+  })
+);
+sky.position.set(0, 0, -42);
+city.add(sky);
+
+function seeded(seed) { let s = seed >>> 0; return () => ((s = (s * 1664525 + 1013904223) >>> 0) / 4294967296); }
+
+// facade textures with random lit windows
+function facadeTexture(seed) {
+  const r = seeded(seed);
+  const cv = document.createElement('canvas'); cv.width = 128; cv.height = 256;
+  const g = cv.getContext('2d');
+  g.fillStyle = '#040405'; g.fillRect(0, 0, 128, 256);
+  const cols = 6 + Math.floor(r() * 4), rows = 18 + Math.floor(r() * 10);
+  const cw = 128 / cols, ch = 256 / rows;
+  const tones = ['#eef4ff', '#f6f9ff', '#e4eeff', '#fff4e0', '#ffe2b0'];
+  for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) {
+    const lit = r() < 0.13;
+    const v = 0.35 + r() * 0.65;
+    g.globalAlpha = lit ? v : 1;
+    g.fillStyle = lit ? tones[Math.floor(r() * tones.length)] : '#0b0b0d';
+    g.fillRect(x * cw + cw * 0.18, y * ch + ch * 0.2, cw * 0.64, ch * 0.55);
+  }
+  g.globalAlpha = 1;
+  const t = new THREE.CanvasTexture(cv);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.anisotropy = 4;
+  return t;
+}
+const facades = [1, 2, 3, 4, 5].map(facadeTexture);
+
+// vertical neon sign texture
+const SIGN_WORDS = ['居酒屋', 'カラオケ', 'ラーメン', '喫茶', '焼鳥', 'スナック', 'BAR', '薬', '中華', '酒', 'ゲーム', '珈琲'];
+// Tokyo neon palette (ungraded photos): mostly red / orange / yellow / pink tubes,
+// a little green and cyan, many bright box signs (行灯) in white and yellow; neutral night
+const NEON = ['#ff1f3d', '#ff1f3d', '#ff2fa0', '#ff2fa0', '#b040ff', '#ffd400', '#ffffff', '#2bff6a', '#2ee0ff', '#3a5bff'];
+const BOX_BG = ['#fffaf0', '#fffaf0', '#fff6c8', '#ffe14a', '#ffffff', '#ffd6e6'];
+const BOX_FG = ['#d0101a', '#d0101a', '#111111', '#111111', '#1a3caa', '#c4006a'];
+function signTexture(word, color, vertical, box, r) {
+  const cv = document.createElement('canvas');
+  cv.width = vertical ? 64 : 256; cv.height = vertical ? 256 : 64;
+  const g = cv.getContext('2d');
+  let fg = color;
+  if (box) {
+    g.fillStyle = BOX_BG[Math.floor(r() * BOX_BG.length)]; g.fillRect(0, 0, cv.width, cv.height);
+    fg = BOX_FG[Math.floor(r() * BOX_FG.length)];
+    g.fillStyle = fg;
+    if (vertical) { g.fillRect(0, 0, cv.width, 22); g.fillRect(0, cv.height - 22, cv.width, 22); }
+    else { g.fillRect(0, 0, 22, cv.height); g.fillRect(cv.width - 22, 0, 22, cv.height); }
+  } else {
+    g.fillStyle = '#07060c'; g.fillRect(0, 0, cv.width, cv.height);
+    g.strokeStyle = color; g.lineWidth = 5; g.strokeRect(4, 4, cv.width - 8, cv.height - 8);
+  }
+  g.fillStyle = fg;
+  g.textAlign = 'center'; g.textBaseline = 'middle';
+  if (vertical) {
+    const chars = [...word];
+    const step = Math.min(48, 200 / chars.length);
+    g.font = `bold ${Math.floor(step * 0.9)}px sans-serif`;
+    chars.forEach((c, i) => g.fillText(c, 32, 128 + (i - (chars.length - 1) / 2) * step));
+  } else {
+    g.font = 'bold 38px sans-serif';
+    g.fillText(word, 128, 34);
+  }
+  const t = new THREE.CanvasTexture(cv);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
+
+// wall-mounted signboards (壁面看板) — the dominant feature in the Kabukicho reference
+const WALL_STYLES = [
+  ['#e8101e', '#ffffff'], ['#e8101e', '#ffe600'], ['#c00818', '#ffffff'], ['#fff3a0', '#d0101a'],
+  ['#ffd400', '#d0101a'], ['#ff2fa0', '#ffffff'], ['#d0108a', '#ffe600'], ['#8a2be2', '#ffffff'],
+  ['#120a18', '#ff2fa0'], ['#0d0d12', '#ffd400'], ['#0d0d12', '#2bff6a'], ['#1d3cff', '#ffffff'], ['#ff6a00', '#ffffff'], ['#ffffff', '#e8101e'],
+];
+const WALL_WORDS = ['カラオケ', '居酒屋', '190円', '焼肉', 'ゲーム', '24H', '漫画喫茶', 'ラーメン', '酒場', '寿司', 'BAR', '中華そば', '全品半額', '牛丼', 'マッサージ', 'OPEN'];
+function wallSignTexture(w, h, r, kind) {
+  const cv = document.createElement('canvas');
+  cv.width = 256; cv.height = Math.max(24, Math.min(512, Math.round(256 * h / w)));
+  const g = cv.getContext('2d');
+  let tint = '#ffffff';
+  if (kind === 'led') {
+    tint = '#2a6cff';
+    // blue LED ornament panel
+    g.fillStyle = '#02040c'; g.fillRect(0, 0, cv.width, cv.height);
+    for (let y = 6; y < cv.height; y += 12) for (let x = 6; x < cv.width; x += 12) {
+      const v = 0.5 + 0.5 * Math.sin(x * 0.09 + Math.sin(y * 0.05) * 3.0);
+      g.fillStyle = v > 0.55 ? '#3aa0ff' : (v > 0.3 ? '#1640ff' : '#06103a');
+      g.beginPath(); g.arc(x, y, 3.2, 0, 6.283); g.fill();
+    }
+  } else if (kind === 'store') {
+    tint = '#ffe2b0';
+    // bright shopfront at street level
+    const grd = g.createLinearGradient(0, 0, 0, cv.height);
+    grd.addColorStop(0, '#fff6dc'); grd.addColorStop(1, '#ffd79a');
+    g.fillStyle = grd; g.fillRect(0, 0, cv.width, cv.height);
+    g.fillStyle = 'rgba(40,20,10,0.55)';
+    for (let x = 0; x < cv.width; x += 36 + r() * 30) g.fillRect(x, cv.height * 0.15, 3, cv.height * 0.85);
+  } else {
+    const [bg, fg] = WALL_STYLES[Math.floor(r() * WALL_STYLES.length)];
+    tint = bg;
+    g.fillStyle = bg; g.fillRect(0, 0, cv.width, cv.height);
+    g.strokeStyle = fg; g.lineWidth = 4; g.strokeRect(5, 5, cv.width - 10, cv.height - 10);
+    g.fillStyle = fg; g.textAlign = 'center'; g.textBaseline = 'middle';
+    const word = WALL_WORDS[Math.floor(r() * WALL_WORDS.length)];
+    const fs = Math.min(cv.height * 0.62, (cv.width * 0.85) / Math.max(1, [...word].length));
+    g.font = `bold ${Math.floor(fs)}px sans-serif`;
+    g.fillText(word, cv.width / 2, cv.height / 2 + 2);
+  }
+  const t = new THREE.CanvasTexture(cv);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.userData.tint = tint;
+  return t;
+}
+
+// light that the facades throw onto the road, accumulated per side along the street (z)
+const STRIP_N = 512, STRIP_Z0 = -38, STRIP_Z1 = 0;
+const strip = new Float32Array(STRIP_N * 2 * 4);
+const _sc = new THREE.Color();
+function stripAdd(side, z0, z1, hex, w) {
+  _sc.set(hex);
+  const row = side < 0 ? 0 : 1;
+  const a = Math.max(0, Math.floor((z0 - STRIP_Z0) / (STRIP_Z1 - STRIP_Z0) * STRIP_N));
+  const b = Math.min(STRIP_N - 1, Math.ceil((z1 - STRIP_Z0) / (STRIP_Z1 - STRIP_Z0) * STRIP_N));
+  for (let i = a; i <= b; i++) {
+    const o = (row * STRIP_N + i) * 4;
+    strip[o] += _sc.r * w; strip[o + 1] += _sc.g * w; strip[o + 2] += _sc.b * w; strip[o + 3] = 1;
+  }
+}
+
+// builds the street: the real street and its wet-asphalt reflection
+const cars = [];       // shared state for both copies
+const carMeshes = [];  // [copy][car]
+const flicker = [];
+const signals = [];
+function buildCity(k, isMirror) {
+  const grp = new THREE.Group();
+  const r = seeded(12345);
+  const side = isMirror ? THREE.DoubleSide : THREE.FrontSide;
+  const emissive = (hex, gain) => new THREE.MeshBasicMaterial({ color: new THREE.Color(hex).multiplyScalar(gain * k), side, toneMapped: false });
+  const dark = new THREE.MeshBasicMaterial({ color: new THREE.Color(0x05060a).multiplyScalar(k * 4), side });
+
+  // buildings on both sides
+  for (const s of [-1, 1]) {
+    let z = -2.8;
+    while (z > -36) {
+      const d = 0.9 + r() * 1.8, w = 0.8 + r() * 1.4, h = 1.2 + r() * 5;
+      const tex = facades[Math.floor(r() * facades.length)].clone();
+      tex.needsUpdate = true;
+      tex.repeat.set(Math.max(1, Math.round(d / 0.9)), Math.max(1, Math.round(h / 2.2)));
+      tex.offset.set(r(), r());
+      const m = new THREE.MeshBasicMaterial({ map: tex, color: new THREE.Color(1, 1, 1).multiplyScalar(1.0 * k), side });
+      const b = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m);
+      b.position.set(s * (EDGE + w / 2), GROUND + h / 2, z - d / 2);
+      if (!isMirror) grp.add(b);
+
+
+      // facade covered with signboards, bright shopfront at the bottom
+      {
+        const face = s * (EDGE - 0.006);
+        const addFlat = (zc, yc, sw, sh, kind, gain) => {
+          const mat = new THREE.MeshBasicMaterial({ map: wallSignTexture(sw, sh, r, kind), color: new THREE.Color(1, 1, 1).multiplyScalar(gain * k), side, toneMapped: false });
+          const p = new THREE.Mesh(new THREE.PlaneGeometry(sw, sh), mat);
+          p.rotation.y = -s * Math.PI / 2;
+          p.position.set(face, yc, zc);
+          if (!inSlot(s, zc)) {
+            grp.add(p);
+            if (!isMirror) stripAdd(s, zc - sw / 2, zc + sw / 2, mat.map.userData.tint, gain * sh / (1 + 1.5 * (yc - GROUND)));
+          }
+          return mat;
+        };
+        addFlat(z - d / 2, GROUND + 0.16, d * 0.94, 0.3, 'store', 1.3);
+        const top = Math.min(h - 0.15, 2.6 + r() * 0.8);
+        let y = GROUND + 0.36;
+        if (r() < 0.12) {
+          addFlat(z - d / 2, GROUND + 0.36 + (top - 0.36) / 2, d * 0.7, top - 0.4, 'led', 2.0);
+        } else {
+          while (y < GROUND + top) {
+            const sh = 0.12 + r() * 0.3;
+            const cols = r() < 0.4 ? 2 : 1;
+            for (let ci = 0; ci < cols; ci++) {
+              const sw = (d * 0.8) / cols - 0.06;
+              const zc = z - d * 0.1 - (sw + 0.06) * (ci + 0.5);
+              const mat = addFlat(zc, y + sh / 2, sw, sh * 0.92, 'box', 1.0 + r() * 1.0);
+              if (r() < 0.06) flicker.push({ mat, base: mat.color.r });
+            }
+            y += sh + 0.06 + (r() < 0.4 ? 0.2 : 0);
+          }
+        }
+      }
+      // signs: Tokyo streets stack several per building
+      const nSigns = r() < 0.3 ? 0 : 1 + Math.floor(r() * 2);
+      for (let si = 0; si < nSigns; si++) {
+        const color = NEON[Math.floor(r() * NEON.length)];
+        const word = SIGN_WORDS[Math.floor(r() * SIGN_WORDS.length)];
+        const vertical = r() < 0.7;
+        const box = r() < 0.45;
+        const gain = box ? 2.2 + r() * 1.8 : 5 + r() * 4;
+        const mat = new THREE.MeshBasicMaterial({ map: signTexture(word, color, vertical, box, r), color: new THREE.Color(1, 1, 1).multiplyScalar(gain * k), side, toneMapped: false });
+        const sw = vertical ? 0.16 : 0.62, sh = vertical ? 0.62 : 0.16;
+        const sign = new THREE.Mesh(new THREE.PlaneGeometry(sw, sh), mat);
+        if (vertical) {
+          sign.position.set(s * (EDGE - sw / 2 - 0.02), GROUND + 0.75 + si * 0.68 + r() * 0.2, z - d * (0.15 + r() * 0.7));
+          if (sign.position.y > GROUND + h - 0.3) continue;
+        } else {
+          sign.position.set(s * (EDGE - 0.01), GROUND + 0.42 + si * 0.22, z - d / 2);
+          sign.rotation.y = -s * Math.PI / 2;
+        }
+        if (!inSlot(s, sign.position.z)) {
+          grp.add(sign);
+          if (!isMirror) stripAdd(s, sign.position.z - 0.15, sign.position.z + 0.15, color, gain * 0.05 / (1 + 1.5 * (sign.position.y - GROUND)));
+        }
+        if (r() < 0.12) flicker.push({ mat, base: gain * k });
+      }
+      // red paper lanterns (提灯) under the eaves of some shops
+      if (r() < 0.35) {
+        const lm = emissive(0xff3214, 4.5);
+        const n = 2 + Math.floor(r() * 4);
+        for (let li = 0; li < n; li++) {
+          const lan = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.085, 12), lm);
+          lan.position.set(s * (EDGE - 0.06), GROUND + 0.62, z - d * (li + 0.5) / n);
+          if (!inSlot(s, lan.position.z)) {
+            grp.add(lan);
+            if (!isMirror) stripAdd(s, lan.position.z - 0.1, lan.position.z + 0.1, '#ff3214', 0.12);
+          }
+        }
+      }
+      z -= d + (r() < 0.15 ? 0.6 + r() * 0.8 : 0.02);
+      if (z < -10 && z > -12.5) z = -12.5; // cross street
+    }
+  }
+
+  // street lamps
+  for (let z = -2.5; z > -36; z -= 3.6) for (const s of [-1, 1]) {
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 1.75, 6), dark);
+    pole.position.set(s * (EDGE - 0.3), GROUND + 0.875, z);
+    const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.045, 12, 8), emissive(0xfff6e8, 6));
+    lamp.position.set(s * (EDGE - 0.4), GROUND + 1.75, z);
+    if (!isMirror) grp.add(pole);
+    grp.add(lamp);
+  }
+
+  // traffic signals at the cross street
+  for (const s of [-1, 1]) {
+    const box = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.12, 0.06), dark);
+    box.position.set(s * 1.1, GROUND + 1.55, -10.3);
+    if (!isMirror) grp.add(box);
+    const lamps = [0x2bff9a, 0xffc400, 0xff2a1a].map((c, i) => {
+      const m = emissive(c, 0);
+      const l = new THREE.Mesh(new THREE.SphereGeometry(0.035, 10, 8), m);
+      l.position.set(s * 1.1 + (i - 1) * 0.1, GROUND + 1.55, -10.26);
+      grp.add(l);
+      return { m, c, gain: 6 * k };
+    });
+    signals.push(lamps);
+  }
+
+  // utility pole and sagging wires (very close to the glass)
+  if (!isMirror) {
+    const up = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.05, 4, 10), new THREE.MeshBasicMaterial({ color: 0x0a0b10 }));
+    up.position.set(-0.95, GROUND + 2, -1.25);
+    grp.add(up);
+    const wireMat = new THREE.MeshBasicMaterial({ color: 0x05060a });
+    for (let i = 0; i < 3; i++) {
+      const y = GROUND + 2.25 + i * 0.12;
+      const curve = new THREE.CatmullRomCurve3([
+        new THREE.Vector3(-0.95, y, -1.25), new THREE.Vector3(0.2, y - 0.18, -3.5), new THREE.Vector3(1.3, y - 0.05, -7),
+      ]);
+      grp.add(new THREE.Mesh(new THREE.TubeGeometry(curve, 40, 0.006, 5), wireMat));
+    }
+  }
+
+  // cars: a simple body with lamps stuck on its faces. Front faces carry headlights, rear faces
+  // taillights; single-sided lamps plus the body itself decide which ones you see.
+  const meshes = [];
+  const L = 0.9, W = 0.38, H = 0.2;          // body (front is +z in car space)
+  for (const car of cars) {
+    const g = new THREE.Group();
+    const lampSide = THREE.FrontSide;          // negative-scale mirror copy is handled by three.js
+    const bodyMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(car.color).multiplyScalar(k), side: lampSide });
+    const glassMat2 = new THREE.MeshBasicMaterial({ color: new THREE.Color(0x020203).multiplyScalar(k), side: lampSide });
+    const body = new THREE.Mesh(new THREE.BoxGeometry(W, H, L), bodyMat);
+    body.position.y = 0.03 + H / 2;
+    const cabin = new THREE.Mesh(new THREE.BoxGeometry(W * 0.86, H * 0.75, L * 0.5), glassMat2);
+    cabin.position.set(0, 0.03 + H + H * 0.375, -L * 0.05);
+    g.add(body, cabin);
+    const head = new THREE.MeshBasicMaterial({ color: new THREE.Color(0xfff4e0).multiplyScalar(10 * k), side: lampSide, toneMapped: false });
+    const tail = new THREE.MeshBasicMaterial({ color: new THREE.Color(0xff160a).multiplyScalar(5 * k), side: lampSide, toneMapped: false });
+    for (const sx of [-1, 1]) {
+      const hl = new THREE.Mesh(new THREE.PlaneGeometry(0.075, 0.035), head);
+      hl.position.set(sx * (W / 2 - 0.055), 0.03 + H * 0.62, L / 2 + 0.002);           // faces +z (forward)
+      const tl = new THREE.Mesh(new THREE.PlaneGeometry(0.08, 0.03), tail);
+      tl.rotation.y = Math.PI;                                                        // faces -z (backward)
+      tl.position.set(sx * (W / 2 - 0.05), 0.03 + H * 0.7, -L / 2 - 0.002);
+      g.add(hl, tl);
+    }
+    // face the direction of travel
+    if (car.dir < 0) g.rotation.y = Math.PI;
+    g.position.set(car.x, GROUND, car.z);
+    grp.add(g);
+    meshes.push(g);
+  }
+  carMeshes.push(meshes);
+  return grp;
+}
+
+const CAR_COLORS = [0x1a1a1c, 0x2a2b2e, 0x3a3a3c, 0x40121a, 0x0e1a2a, 0x3d3a30, 0x4a3a08, 0x1c2a22];
+const carColor = () => new THREE.Color(CAR_COLORS[Math.floor(Math.random() * CAR_COLORS.length)]).multiplyScalar(0.55);
+for (let i = 0; i < 7; i++) cars.push({ dir: 1, x: -0.62, z: -36 + i * 5 + Math.random() * 2, v: 2.2 + Math.random() * 1.6, color: carColor() });
+for (let i = 0; i < 7; i++) cars.push({ dir: -1, x: 0.62, z: -36 + i * 5 + Math.random() * 2, v: 1.8 + Math.random() * 1.6, color: carColor() });
+
+// cityRoot places the street so that our window is a window of one of its buildings:
+// the street runs left-right in front of us, we are about one floor up, looking across.
+const cityRoot = new THREE.Group();
+cityRoot.add(buildCity(1, false));
+
+// ground: dull asphalt, lit only diffusely by the facades, street lamps and car lamps
+const stripTex = new THREE.DataTexture(strip, STRIP_N, 2, THREE.RGBAFormat, THREE.FloatType);
+stripTex.minFilter = stripTex.magFilter = THREE.LinearFilter;
+stripTex.needsUpdate = true;
+const groundGeo = new THREE.PlaneGeometry(2 * EDGE + 0.2, STRIP_Z1 - STRIP_Z0, 1, 1);
+groundGeo.rotateX(-Math.PI / 2);
+groundGeo.translate(0, 0, (STRIP_Z0 + STRIP_Z1) / 2);
+const groundMat = new THREE.ShaderMaterial({
+  uniforms: {
+    tStrip: { value: stripTex },
+    uCars: { value: Array.from({ length: 16 }, () => new THREE.Vector4(0, 100, 1, 0)) },
+    uCarCount: { value: 0 },
+  },
+  vertexShader: `varying vec2 vP; void main(){ vP = position.xz; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+  fragmentShader: `
+    uniform sampler2D tStrip;
+    uniform vec4 uCars[16];
+    uniform int uCarCount;
+    varying vec2 vP;
+    const float EDGE = ${EDGE.toFixed(3)};
+    const float Z0 = ${STRIP_Z0.toFixed(1)}, Z1 = ${STRIP_Z1.toFixed(1)};
+    vec3 wallLight(float side, vec2 p){
+      float dx = abs(p.x - side * EDGE);
+      float spread = 0.25 + dx * 0.7;
+      vec3 acc = vec3(0.0);
+      for (int i = -3; i <= 3; i++){
+        float z = p.y + float(i) * spread / 3.0;
+        acc += texture2D(tStrip, vec2((z - Z0) / (Z1 - Z0), side < 0.0 ? 0.25 : 0.75)).rgb;
+      }
+      return acc / 7.0 / (1.0 + dx * dx * 1.2);
+    }
+    void main(){
+      vec2 p = vP;
+      vec3 E = vec3(0.004);                                   // ambient
+      E += (wallLight(-1.0, p) + wallLight(1.0, p)) * 0.55;  // facades
+      // street lamps: irradiance from a point at height h
+      float lz = -2.5, step = 3.6, h = 1.75;
+      float n = floor((p.y - lz) / -step);
+      for (int k = -1; k <= 2; k++){
+        float zz = lz - (n + float(k)) * step;
+        for (int sd = 0; sd < 2; sd++){
+          float lx = (sd == 0 ? -1.0 : 1.0) * (EDGE - 0.4);
+          float d2 = (p.x - lx) * (p.x - lx) + (p.y - zz) * (p.y - zz);
+          E += vec3(1.0, 0.96, 0.9) * 1.1 * h / pow(h * h + d2, 1.5);
+        }
+      }
+      // car lamps: headlight pool ahead, red glow behind
+      for (int i = 0; i < 16; i++){
+        if (i >= uCarCount) break;
+        vec4 c = uCars[i];
+        vec2 rel = p - c.xy;
+        float f = rel.y * c.z, sx = rel.x;
+        float ahead = f - 0.45;
+        if (ahead > 0.0){
+          float w = 0.12 + ahead * 0.22;
+          E += vec3(1.0, 0.95, 0.85) * 0.9 * exp(-sx * sx / (w * w)) * exp(-ahead * 0.55) * smoothstep(0.0, 0.25, ahead);
+        }
+        float behind = -f - 0.45;
+        if (behind > -0.05){
+          E += vec3(1.0, 0.08, 0.03) * 0.35 * exp(-max(behind, 0.0) * 4.0) * exp(-sx * sx / 0.04);
+        }
+      }
+      // albedo: asphalt, with a zebra crossing in front of the cross street
+      float albedo = 0.1;
+      if (p.y < -2.95 && p.y > -3.85 && abs(p.x) < 1.75 && fract(p.x / 0.32 + 0.25) < 0.5) albedo = 0.45;
+      gl_FragColor = vec4(E * albedo, 1.0);
+      #include <colorspace_fragment>
+    }`,
+});
+const ground = new THREE.Mesh(groundGeo, groundMat);
+ground.position.y = GROUND;
+cityRoot.add(ground);
+cityRoot.rotation.y = -Math.PI / 2;      // street (local z) now runs along world x
+cityRoot.position.set(SLOT_Z, -1.2, -EDGE); // our facade line lands on the glass plane (z = 0)
+cityContent.add(cityRoot);
+
+// traffic: each lane is a loop from z = RING_A to RING_B. Cars keep a gap to the car ahead
+// and stop at the stop line on red (and on yellow when they can still stop).
+const RING_A = -36, RING_B = -0.6, RING_LEN = RING_B - RING_A;
+const CAR_LEN = 0.9;
+const STOP_LINE = { 1: -12.9, '-1': -9.6 };
+const along = (c) => (c.dir > 0 ? c.z - RING_A : RING_B - c.z); // distance travelled in the lane
+function updateCity(t, dt) {
+  groundMat.uniforms.uCarCount.value = Math.min(cars.length, 16);
+  const phase = (t % 14) / 14; // green → yellow → red
+  const on = phase < 0.55 ? 0 : phase < 0.65 ? 1 : 2;
+  for (const lamps of signals) lamps.forEach((l, i) => l.m.color.set(l.c).multiplyScalar(i === on ? l.gain : 0.04 * l.gain));
+
+  for (let i = 0; i < cars.length; i++) {
+    const c = cars[i];
+    if (c.cur === undefined) c.cur = c.v;
+    const sMe = along(c);
+    // bumper-to-bumper gap to the nearest car ahead in the same lane
+    let gap = Infinity;
+    for (const o of cars) {
+      if (o === c || o.dir !== c.dir) continue;
+      let d = along(o) - sMe;
+      if (d <= 0) d += RING_LEN;
+      gap = Math.min(gap, d - CAR_LEN);
+    }
+    let target = Math.min(c.v, Math.max(0, gap - 0.45) * 1.6);
+    // stop line
+    const toLine = (STOP_LINE[c.dir] - c.z) * c.dir - CAR_LEN / 2;
+    const mustStop = on === 2 || (on === 1 && toLine > 1.0);
+    if (mustStop && toLine > -0.05) target = Math.min(target, Math.max(0, toLine - 0.05) * 1.6);
+    // gentle acceleration, firm braking
+    c.cur = target > c.cur ? Math.min(target, c.cur + 1.8 * dt) : Math.max(target, c.cur - 7 * dt);
+    // never move into the car ahead, whatever the speed
+    const move = Math.min(c.cur * dt, Math.max(0, gap - 0.12));
+    c.z += c.dir * move;
+    if (c.dir > 0 && c.z > RING_B) c.z -= RING_LEN;
+    if (c.dir < 0 && c.z < RING_A) c.z += RING_LEN;
+    for (const ms of carMeshes) ms[i].position.z = c.z;
+    if (i < 16) groundMat.uniforms.uCars.value[i].set(c.x, c.z, c.dir, 0);
+  }
+  for (const f of flicker) {
+    const off = Math.sin(t * 37.0 + f.base * 13.0) > 0.6 && Math.sin(t * 1.3 + f.base) > 0.3;
+    f.mat.color.setScalar(off ? f.base * 0.08 : f.base);
+  }
+}
+
+// ---------------------------------------------------------------- render target (color + depth)
+const rt = new THREE.WebGLRenderTarget(1, 1, {
+  type: THREE.HalfFloatType,
+  minFilter: THREE.LinearMipmapLinearFilter,
+  magFilter: THREE.LinearFilter,
+  generateMipmaps: true,
+  depthBuffer: true,
+});
+rt.depthTexture = new THREE.DepthTexture(1, 1);
+rt.depthTexture.type = THREE.UnsignedIntType;
+
+// ---------------------------------------------------------------- glass
+const glassScene = new THREE.Scene();
+const glassMat = new THREE.ShaderMaterial({
+  uniforms: {
+    tScene: { value: rt.texture },
+    tDepth: { value: rt.depthTexture },
+    uRes: { value: new THREE.Vector2(1, 1) },
+    uNear: { value: camera.near },
+    uFar: { value: camera.far },
+    uRefract: { value: 1 },
+    uBlur: { value: 1 },
+    uWire: { value: 1 },
+    uGlass: { value: 1 },
+    uGlow: { value: 0.05 },
+    uProj: { value: 1.374 },
+    uScale: { value: 293 },
+    uCamPos: { value: camera.position },
+  },
+  vertexShader: /* glsl */`
+    varying vec3 vWorld;
+    varying float vViewZ;
+    void main(){
+      vec4 w = modelMatrix * vec4(position, 1.0);
+      vWorld = w.xyz;
+      vec4 mv = viewMatrix * w;
+      vViewZ = -mv.z;
+      gl_Position = projectionMatrix * mv;
+    }`,
+  fragmentShader: /* glsl */`
+    uniform sampler2D tScene;
+    uniform sampler2D tDepth;
+    uniform vec2 uRes;
+    uniform float uNear, uFar, uRefract, uBlur, uWire, uGlass, uGlow, uProj, uScale;
+    uniform vec3 uCamPos;
+    varying vec3 vWorld;
+    varying float vViewZ;
+
+    float hash(vec2 p){ p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
+    float vnoise(vec2 p){
+      vec2 i = floor(p), f = fract(p);
+      vec2 u = f * f * (3.0 - 2.0 * f);
+      return mix(mix(hash(i), hash(i + vec2(1,0)), u.x), mix(hash(i + vec2(0,1)), hash(i + vec2(1,1)), u.x), u.y);
+    }
+    // "kasumi" pattern: soft irregular pebbles.
+    // Octaves whose cells would be smaller than ~2 px on screen are faded out (cheap LOD) to avoid shimmer.
+    float gFw;
+    float height(vec2 p){
+      float h = 0.0, a = 0.55, f = 1.0;
+      mat2 R = mat2(0.8, -0.6, 0.6, 0.8);
+      for (int i = 0; i < 5; i++){
+        float lodFade = i == 0 ? 1.0 : 1.0 - smoothstep(0.35, 0.7, gFw * f);
+        h += a * lodFade * vnoise(p);
+        p = R * p * 2.03 + 17.1; a *= 0.45; f *= 2.03;
+      }
+      return h;
+    }
+    float linDepth(float d){ return (uNear * uFar) / (uFar - d * (uFar - uNear)); }
+
+    // blur radius (in screen-height units) for a given distance behind the glass
+    // screen-space sizes (in screen-height units): glass scatters by a fixed angle,
+    // so the lateral spread at the object is ~ d * angle, seen from the eye at (zg + d)
+    float radiusFor(float d, float zg){ return uBlur * uProj * (0.0048 / zg + 0.08 * d / (zg + d)); }
+    float shiftFor(float d, float zg){ return uRefract * uProj * (0.0019 / zg + 0.026 * d / (zg + d)); }
+
+    void main(){
+      vec2 suv = gl_FragCoord.xy / uRes;
+      vec2 aspect = vec2(uRes.y / uRes.x, 1.0);
+
+      if (uGlass < 0.5){
+        gl_FragColor = vec4(texture(tScene, suv).rgb, 1.0);
+        #include <tonemapping_fragment>
+        #include <colorspace_fragment>
+        return;
+      }
+
+      // --- surface normal from the pattern height field
+      float S = uScale;
+      vec2 p = vWorld.xy * S;
+      gFw = max(fwidth(p.x), fwidth(p.y));
+      float e = 0.35;
+      vec2 grad = vec2(height(p + vec2(e,0)) - height(p - vec2(e,0)),
+                       height(p + vec2(0,e)) - height(p - vec2(0,e))) / (2.0 * e);
+      vec2 slope = grad * 2.2;
+
+      // --- refraction: lateral shift grows with distance behind the glass
+      float zg = vViewZ;
+      float d0 = max(linDepth(texture(tDepth, suv).r) - zg, 0.0);
+      vec2 off = slope * shiftFor(d0, zg);
+      float d = max(linDepth(texture(tDepth, suv + off * aspect).r) - zg, 0.0);
+      off = slope * shiftFor(d, zg);
+      vec2 c = suv + off * aspect;
+      d = max(linDepth(texture(tDepth, c).r) - zg, 0.0);
+
+      // --- depth-aware disc blur (scatter-as-gather)
+      float R = min(radiusFor(d, zg), 0.14);
+      float lod = clamp(log2(R * uRes.y * 0.33), 0.0, 6.0);
+      vec3 acc = textureLod(tScene, c, lod * 0.6).rgb;
+      float wsum = 1.0;
+      const int N = 24;
+      float rot = hash(gl_FragCoord.xy) * 6.2831;
+      for (int i = 0; i < N; i++){
+        float fi = float(i) + 0.5;
+        float rr = R * sqrt(fi / float(N));
+        float th = fi * 2.39996 + rot;
+        vec2 o = vec2(cos(th), sin(th)) * rr;
+        vec2 tc = c + o * aspect;
+        float dt = max(linDepth(texture(tDepth, tc).r) - zg, 0.0);
+        float rt = radiusFor(dt, zg);
+        float w = clamp((rt - rr * 0.6) / (rr * 0.4 + 0.003), 0.0, 1.0);
+        acc += textureLod(tScene, tc, lod).rgb * w;
+        wsum += w;
+      }
+      vec3 col = acc / wsum;
+      // light scattered widely inside the patterned glass (halation)
+      col += (textureLod(tScene, c, 4.5).rgb * 0.4 + textureLod(tScene, c, 6.5).rgb * 0.6) * uGlow;
+
+      // --- glass body: slight green tint + milky scatter
+      float haze = clamp(R * 6.0, 0.0, 1.0);
+      col = col * vec3(0.93, 0.98, 0.94) + vec3(0.018, 0.024, 0.02) * (0.4 + haze);
+
+      // --- surface sheen
+      vec3 N3 = normalize(vec3(-slope * 0.2, 1.0));
+      vec3 V = normalize(uCamPos - vWorld);
+      vec3 L = normalize(vec3(0.5, 0.7, 0.6));
+      float spec = pow(max(dot(N3, normalize(L + V)), 0.0), 60.0);
+      float fres = pow(1.0 - max(dot(N3, V), 0.0), 5.0);
+      col += vec3(0.9, 0.95, 1.0) * (spec * 0.12 + fres * 0.05);
+
+      // --- embedded wire mesh (sharp, slightly wobbled by the front surface)
+      if (uWire > 0.5){
+        const float pitch = 0.042;
+        vec2 gp = vWorld.xy / pitch + slope * 0.035;
+        vec2 g = abs(fract(gp) - 0.5);
+        vec2 fw = fwidth(gp);
+        float halfW = 0.03;
+        vec2 l = 1.0 - smoothstep(halfW - fw, halfW + fw, 0.5 - g);
+        float line = max(l.x, l.y);
+        float shade = 0.045 + 0.07 * pow(max(dot(N3, normalize(L + V)), 0.0), 8.0);
+        col = mix(col, vec3(shade), line * 0.92);
+      }
+
+      gl_FragColor = vec4(col, 1.0);
+      #include <tonemapping_fragment>
+      #include <colorspace_fragment>
+    }`,
+});
+
+// ---------------------------------------------------------------- room + window (fixed in space)
+// The window opening is centred at (0, WIN_Y) on the plane z = 0; the room extends to +z.
+const WIN_W = 1.8, WIN_H = 1.2, WIN_Y = 0.1;
+
+// ---- procedural textures
+function canvasTexture(w, h, draw, { srgb = true, repeat = [1, 1] } = {}) {
+  const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+  draw(cv.getContext('2d'), w, h);
+  const t = new THREE.CanvasTexture(cv);
+  if (srgb) t.colorSpace = THREE.SRGBColorSpace;
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.repeat.set(repeat[0], repeat[1]);
+  t.anisotropy = 8;
+  return t;
+}
+const rnd = seeded(777);
+// fine stucco for walls / ceiling (bump)
+const stuccoTex = () => canvasTexture(256, 256, (g, w, h) => {
+  const img = g.createImageData(w, h);
+  for (let i = 0; i < w * h; i++) { const v = 118 + rnd() * 20 + (rnd() < 0.04 ? 40 : 0); img.data.set([v, v, v, 255], i * 4); }
+  g.putImageData(img, 0, 0);
+  g.filter = 'blur(0.6px)'; g.drawImage(g.canvas, 0, 0); g.filter = 'none';
+}, { srgb: false, repeat: [6, 4] });
+// floor boards
+function plankTextures() {
+  const W = 1024, H = 1024, PW = 64;
+  const col = document.createElement('canvas'); col.width = W; col.height = H;
+  const rough = document.createElement('canvas'); rough.width = W; rough.height = H;
+  const g = col.getContext('2d'), r = rough.getContext('2d');
+  r.fillStyle = '#5a5a5a'; r.fillRect(0, 0, W, H);
+  for (let x = 0; x < W; x += PW) {
+    let y = -Math.floor(rnd() * H);
+    while (y < H) {
+      const len = 300 + rnd() * 500;
+      const l = 30 + rnd() * 7, hue = 27 + rnd() * 6, sat = 26 + rnd() * 10;
+      g.fillStyle = `hsl(${hue}, ${sat}%, ${l}%)`; g.fillRect(x, y, PW, len);
+      // grain
+      for (let k = 0; k < 14; k++) {
+        g.strokeStyle = `hsla(${hue - 3}, ${sat}%, ${l - 7 - rnd() * 4}%, ${0.15 + rnd() * 0.25})`;
+        g.lineWidth = 0.6 + rnd() * 1.4;
+        g.beginPath();
+        const x0 = x + rnd() * PW, amp = 1 + rnd() * 4, fq = 0.004 + rnd() * 0.01, ph = rnd() * 6;
+        for (let yy = y; yy < y + len; yy += 6) g.lineTo(Math.min(x + PW - 1, Math.max(x + 1, x0 + Math.sin(yy * fq + ph) * amp)), yy);
+        g.stroke();
+      }
+      // seams
+      g.fillStyle = 'rgba(20,12,6,0.55)'; g.fillRect(x, y, 1.5, len); g.fillRect(x, y, PW, 1.5);
+      const rv = (80 + rnd() * 40) | 0;
+      r.fillStyle = `rgb(${rv},${rv},${rv})`;
+      r.fillRect(x + 2, y + 2, PW - 2, len - 2);
+      y += len;
+    }
+  }
+  const mk = (cv, srgb) => { const t = new THREE.CanvasTexture(cv); if (srgb) t.colorSpace = THREE.SRGBColorSpace; t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = 8; return t; };
+  return { map: mk(col, true), rough: mk(rough, false) };
+}
+const planks = plankTextures();
+// light wood for casing / sill
+const trimTex = canvasTexture(256, 64, (g, w, h) => {
+  g.fillStyle = '#c9a77f'; g.fillRect(0, 0, w, h);
+  for (let k = 0; k < 40; k++) {
+    g.strokeStyle = `rgba(120,80,45,${0.1 + rnd() * 0.25})`; g.lineWidth = 0.5 + rnd();
+    g.beginPath(); const y0 = rnd() * h, a = 1 + rnd() * 3, f = 0.01 + rnd() * 0.03;
+    for (let x = 0; x <= w; x += 4) g.lineTo(x, y0 + Math.sin(x * f + k) * a);
+    g.stroke();
+  }
+});
+
+// ---- materials
+const alu = new THREE.MeshStandardMaterial({ color: 0xd2d4ce, metalness: 0.9, roughness: 0.32 });
+const aluDark = new THREE.MeshStandardMaterial({ color: 0x9a9c96, metalness: 0.9, roughness: 0.4 });
+const wood = new THREE.MeshStandardMaterial({ map: trimTex, roughness: 0.55 });
+const baseboardMat = new THREE.MeshStandardMaterial({ color: 0x4a3524, roughness: 0.5 });
+const plaster = new THREE.MeshStandardMaterial({ color: 0xe7e1d5, roughness: 0.93, bumpMap: stuccoTex(), bumpScale: 0.8 });
+const ceilingMat = new THREE.MeshStandardMaterial({ color: 0xefede8, roughness: 0.97, bumpMap: stuccoTex(), bumpScale: 0.5 });
+planks.map.repeat.set(2.6, 2.4); planks.rough.repeat.set(2.6, 2.4);
+const floorMat = new THREE.MeshPhysicalMaterial({ map: planks.map, roughnessMap: planks.rough, roughness: 0.75, clearcoat: 0.35, clearcoatRoughness: 0.18 });
+const whitePlastic = new THREE.MeshStandardMaterial({ color: 0xf2f0ea, roughness: 0.45 });
+
+function box(w, h, d, mat, x, y, z) {
+  const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+  m.position.set(x, y, z);
+  glassScene.add(m);
+  return m;
+}
+
+// outer aluminium frame (sits in the wall opening)
+const F = 0.045;           // frame member width
+const FD = 0.11;           // frame depth (z from -0.05 to +0.06)
+const fz = 0.005;
+box(WIN_W + 2 * F, F, FD, alu, 0, WIN_Y + WIN_H / 2 + F / 2, fz);
+box(WIN_W + 2 * F, F, FD, alu, 0, WIN_Y - WIN_H / 2 - F / 2, fz);
+box(F, WIN_H, FD, alu, -WIN_W / 2 - F / 2, WIN_Y, fz);
+box(F, WIN_H, FD, alu, WIN_W / 2 + F / 2, WIN_Y, fz);
+for (const sy of [-1, 1]) for (const z of [-0.018, 0.018]) box(WIN_W, 0.008, 0.006, aluDark, 0, WIN_Y + sy * (WIN_H / 2 - 0.004), z);
+
+// two sliding sashes (引き違い)
+const SW = 0.034, SD = 0.028, OVER = 0.03;
+const panes = [];
+function sash(x0, x1, z) {
+  const w = x1 - x0, cx = (x0 + x1) / 2;
+  box(w, SW, SD, alu, cx, WIN_Y + WIN_H / 2 - SW / 2, z);
+  box(w, SW, SD, alu, cx, WIN_Y - WIN_H / 2 + SW / 2, z);
+  box(SW, WIN_H - 2 * SW, SD, alu, x0 + SW / 2, WIN_Y, z);
+  box(SW, WIN_H - 2 * SW, SD, alu, x1 - SW / 2, WIN_Y, z);
+  const gw = w - 2 * SW + 0.004, gh = WIN_H - 2 * SW + 0.004;
+  const g = new THREE.Mesh(new THREE.PlaneGeometry(gw, gh), glassMat);
+  g.position.set(cx, WIN_Y, z);
+  g.userData.isGlass = true;
+  glassScene.add(g);
+  panes.push({ mesh: g, cx, w: gw, h: gh, z });
+}
+sash(-WIN_W / 2, OVER / 2, -0.018);
+sash(-OVER / 2, WIN_W / 2, 0.018);
+// crescent lock
+box(0.05, 0.016, 0.012, aluDark, -0.005, WIN_Y + 0.02, 0.04);
+box(0.012, 0.03, 0.01, aluDark, -0.02, WIN_Y + 0.02, 0.05);
+
+// wall with the opening, casing (額縁), sill, curtain rail
+const WALL_Z = 0.16, JAMB = WALL_Z - 0.06;
+const ROOM = { x: 2.5, back: 4.8, floor: -1.3, ceil: 1.45 };
+{
+  const s = new THREE.Shape();
+  s.moveTo(-ROOM.x, ROOM.floor); s.lineTo(ROOM.x, ROOM.floor); s.lineTo(ROOM.x, ROOM.ceil); s.lineTo(-ROOM.x, ROOM.ceil); s.lineTo(-ROOM.x, ROOM.floor);
+  const hw = WIN_W / 2 + F, hh = WIN_H / 2 + F;
+  const h = new THREE.Path();
+  h.moveTo(-hw, WIN_Y - hh); h.lineTo(-hw, WIN_Y + hh); h.lineTo(hw, WIN_Y + hh); h.lineTo(hw, WIN_Y - hh); h.lineTo(-hw, WIN_Y - hh);
+  s.holes.push(h);
+  const wallGeo = new THREE.ShapeGeometry(s);
+  // ShapeGeometry UVs are in world units: scale them for the stucco
+  const uv = wallGeo.attributes.uv; for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) / 0.8, uv.getY(i) / 0.8);
+  const wall = new THREE.Mesh(wallGeo, plaster);
+  wall.position.z = WALL_Z;
+  glassScene.add(wall);
+  const jz = 0.06 + JAMB / 2;
+  box(2 * hw, 0.02, JAMB, wood, 0, WIN_Y + hh - 0.01, jz);
+  box(0.02, 2 * hh, JAMB, wood, -hw + 0.01, WIN_Y, jz);
+  box(0.02, 2 * hh, JAMB, wood, hw - 0.01, WIN_Y, jz);
+  box(2 * hw + 0.12, 0.025, JAMB + 0.07, wood, 0, WIN_Y - hh - 0.0125, 0.06 + (JAMB + 0.07) / 2);
+  const T = 0.05;
+  box(2 * hw + 2 * T, T, 0.015, wood, 0, WIN_Y + hh + T / 2, WALL_Z + 0.0075);
+  box(T, 2 * hh, 0.015, wood, -hw - T / 2, WIN_Y, WALL_Z + 0.0075);
+  box(T, 2 * hh, 0.015, wood, hw + T / 2, WIN_Y, WALL_Z + 0.0075);
+  // curtain rail with brackets and runners
+  const ry = WIN_Y + hh + T + 0.07, rz = WALL_Z + 0.07, rl = 2 * hw + 0.5;
+  box(rl, 0.022, 0.03, whitePlastic, 0, ry, rz);
+  for (const x of [-rl / 2 + 0.12, 0, rl / 2 - 0.12]) box(0.025, 0.03, 0.07, whitePlastic, x, ry + 0.012, WALL_Z + 0.035);
+  for (let x = -rl / 2 + 0.06; x < rl / 2 - 0.04; x += 0.09) box(0.014, 0.018, 0.014, whitePlastic, x, ry - 0.018, rz);
+}
+// floor, ceiling, walls, baseboards, outlet, ceiling light
+{
+  const D = ROOM.back - WALL_Z, Hh = ROOM.ceil - ROOM.floor;
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(2 * ROOM.x, D), floorMat);
+  floor.rotation.x = -Math.PI / 2; floor.position.set(0, ROOM.floor, (ROOM.back + WALL_Z) / 2);
+  const ceil = new THREE.Mesh(new THREE.PlaneGeometry(2 * ROOM.x, D), ceilingMat);
+  ceil.rotation.x = Math.PI / 2; ceil.position.set(0, ROOM.ceil, (ROOM.back + WALL_Z) / 2);
+  const back = new THREE.Mesh(new THREE.PlaneGeometry(2 * ROOM.x, Hh), plaster);
+  back.rotation.y = Math.PI; back.position.set(0, (ROOM.ceil + ROOM.floor) / 2, ROOM.back);
+  glassScene.add(floor, ceil, back);
+  for (const s of [-1, 1]) {
+    const side = new THREE.Mesh(new THREE.PlaneGeometry(D, Hh), plaster);
+    side.rotation.y = -s * Math.PI / 2; side.position.set(s * ROOM.x, (ROOM.ceil + ROOM.floor) / 2, (ROOM.back + WALL_Z) / 2);
+    glassScene.add(side);
+    box(0.012, 0.07, D, baseboardMat, s * (ROOM.x - 0.006), ROOM.floor + 0.035, (ROOM.back + WALL_Z) / 2);
+  }
+  box(2 * ROOM.x, 0.07, 0.012, baseboardMat, 0, ROOM.floor + 0.035, WALL_Z + 0.006);
+  box(2 * ROOM.x, 0.07, 0.012, baseboardMat, 0, ROOM.floor + 0.035, ROOM.back - 0.006);
+  // power outlet on the right wall
+  box(0.006, 0.12, 0.07, whitePlastic, ROOM.x - 0.003, ROOM.floor + 0.3, 1.4);
+  for (const dz of [-0.012, 0.012]) for (const dy of [-0.022, 0.022]) box(0.008, 0.012, 0.004, new THREE.MeshStandardMaterial({ color: 0x222222 }), ROOM.x - 0.006, ROOM.floor + 0.3 + dy, 1.4 + dz);
+}
+
+// ---- lights
+// window = two area lights whose colour is measured from what is outside (frosted glass makes it diffuse)
+RectAreaLightUniformsLib.init();
+const windowLights = panes.map((p) => {
+  const l = new THREE.RectAreaLight(0xffffff, 1, p.w, p.h);
+  l.position.set(p.cx, WIN_Y, 0.07);
+  l.lookAt(p.cx, WIN_Y, 10);
+  glassScene.add(l);
+  return l;
+});
+const roomLights = {
+  amb: new THREE.HemisphereLight(0xfff3e0, 0x2a2622, 0.05),
+  ceil: new THREE.PointLight(0xffe7c4, 0, 0, 2),
+};
+roomLights.ceil.position.set(0, ROOM.ceil - 0.12, 2.6);
+roomLights.ceil.castShadow = true;
+roomLights.ceil.shadow.mapSize.set(1024, 1024);
+roomLights.ceil.shadow.bias = -0.0015;
+roomLights.ceil.shadow.radius = 4;
+roomLights.ceil.shadow.camera.near = 0.05;
+glassScene.add(roomLights.amb, roomLights.ceil);
+// round ceiling fixture: frosted dome that glows when on
+const lampMat = new THREE.MeshStandardMaterial({ color: 0xf4f2ee, roughness: 0.6, emissive: 0xfff0d8, emissiveIntensity: 0 });
+{
+  const dome = new THREE.Mesh(new THREE.SphereGeometry(0.26, 40, 16, 0, Math.PI * 2, Math.PI / 2, Math.PI / 2), lampMat);
+  dome.scale.y = 0.32;
+  dome.position.set(0, ROOM.ceil, 2.6);
+  dome.castShadow = false;
+  glassScene.add(dome);
+}
+let lampOn = false;
+function setLamp(on) {
+  lampOn = on;
+  roomLights.ceil.intensity = on ? 9 : 0;
+  lampMat.emissiveIntensity = on ? 2.2 : 0;
+  const b = document.getElementById('lampBtn');
+  if (b) b.classList.toggle('on', on);
+}
+
+// environment for metal reflections (dimmed per scene)
+{
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  glassScene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+  glassScene.environmentIntensity = 0.1;
+}
+
+// shadows for everything in the room except the glass
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+glassScene.traverse((o) => {
+  if (o.isMesh && !o.userData.isGlass) { o.castShadow = true; o.receiveShadow = true; }
+});
+
+// ---- probe: what does the window "see"? (camera-independent, used to colour the window lights)
+const probeRT = new THREE.WebGLRenderTarget(32, 16, { type: THREE.FloatType, depthBuffer: true });
+const probeCam = new THREE.PerspectiveCamera(120, 2, 0.05, 45);
+probeCam.position.set(0, WIN_Y, -0.02);
+probeCam.lookAt(0, WIN_Y, -10);
+const probeBuf = new Float32Array(32 * 16 * 4);
+const winCol = [new THREE.Color(0, 0, 0), new THREE.Color(0, 0, 0)];
+let probeOk = true;
+let probeFrame = 0;
+function updateProbe(outsideScene, gain) {
+  if (!probeOk) return;
+  try {
+    renderer.setRenderTarget(probeRT);
+    renderer.clippingPlanes = OUTSIDE_ONLY;
+    renderer.render(outsideScene, probeCam);
+    renderer.clippingPlanes = [];
+    renderer.readRenderTargetPixels(probeRT, 0, 0, 32, 16, probeBuf);
+    renderer.setRenderTarget(null);
+  } catch (e) { probeOk = false; renderer.setRenderTarget(null); return; }
+  const acc = [[0, 0, 0], [0, 0, 0]];
+  for (let y = 0; y < 16; y++) for (let x = 0; x < 32; x++) {
+    const o = (y * 32 + x) * 4, side = x < 16 ? 0 : 1;
+    acc[side][0] += probeBuf[o]; acc[side][1] += probeBuf[o + 1]; acc[side][2] += probeBuf[o + 2];
+  }
+  for (let i = 0; i < 2; i++) {
+    const n = 16 * 16;
+    winCol[i].lerp(new THREE.Color(acc[i][0] / n, acc[i][1] / n, acc[i][2] / n), 0.35);
+    windowLights[i].color.copy(winCol[i]);
+    windowLights[i].intensity = gain;
+  }
+}
+
+// ---------------------------------------------------------------- first-person controls
+const keys = new Set();
+const KEYMAP = { KeyW: 'f', ArrowUp: 'f', KeyS: 'b', ArrowDown: 'b', KeyA: 'l', ArrowLeft: 'l', KeyD: 'r', ArrowRight: 'r', ShiftLeft: 'fast', ShiftRight: 'fast' };
+addEventListener('keydown', (e) => { if (KEYMAP[e.code]) { keys.add(KEYMAP[e.code]); if (e.code.startsWith('Arrow')) e.preventDefault(); } });
+addEventListener('keyup', (e) => { if (KEYMAP[e.code]) keys.delete(KEYMAP[e.code]); });
+addEventListener('blur', () => keys.clear());
+
+const player = { pos: new THREE.Vector3(0, 0.15, 2.2), yaw: 0, pitch: 0 };
+window.__glass = { player, winCol: () => winCol.map(c => c.toArray()), setLamp: (v) => setLamp(v) };
+let dragging = null;
+canvas.addEventListener('pointerdown', (e) => { dragging = { x: e.clientX, y: e.clientY, id: e.pointerId }; canvas.setPointerCapture(e.pointerId); });
+canvas.addEventListener('pointermove', (e) => {
+  if (!dragging || dragging.id !== e.pointerId) return;
+  const k = 2.2 / innerHeight;
+  player.yaw += (e.clientX - dragging.x) * k;
+  player.pitch += (e.clientY - dragging.y) * k;
+  player.pitch = Math.max(-1.1, Math.min(1.1, player.pitch));
+  dragging.x = e.clientX; dragging.y = e.clientY;
+});
+['pointerup', 'pointercancel'].forEach(t => canvas.addEventListener(t, () => { dragging = null; }));
+
+// on-screen pad for touch devices
+document.querySelectorAll('#pad button').forEach((b) => {
+  const k = b.dataset.k;
+  b.addEventListener('pointerdown', (e) => { e.preventDefault(); keys.add(k); b.setPointerCapture(e.pointerId); });
+  ['pointerup', 'pointercancel', 'lostpointercapture'].forEach(t => b.addEventListener(t, () => keys.delete(k)));
+});
+
+const fwd = new THREE.Vector3(), rightV = new THREE.Vector3();
+function updatePlayer(dt) {
+  const speed = (keys.has('fast') ? 2.4 : 1.1) * dt;
+  // derive the move basis from the camera's actual heading (rotation.y = -yaw), flattened to the floor
+  camera.rotation.set(-player.pitch, -player.yaw, 0, 'YXZ');
+  camera.getWorldDirection(fwd);
+  fwd.y = 0; fwd.normalize();
+  rightV.crossVectors(fwd, camera.up).normalize();
+  if (keys.has('f')) player.pos.addScaledVector(fwd, speed);
+  if (keys.has('b')) player.pos.addScaledVector(fwd, -speed);
+  if (keys.has('r')) player.pos.addScaledVector(rightV, speed);
+  if (keys.has('l')) player.pos.addScaledVector(rightV, -speed);
+  player.pos.x = Math.max(-ROOM.x + 0.2, Math.min(ROOM.x - 0.2, player.pos.x));
+  player.pos.z = Math.max(WALL_Z + 0.12, Math.min(ROOM.back - 0.2, player.pos.z));
+  // can lean into the window opening, but not through the glass
+  if (Math.abs(player.pos.x) < WIN_W / 2 && player.pos.z < WALL_Z + 0.12) player.pos.z = Math.max(player.pos.z, 0.14);
+  camera.position.copy(player.pos);
+  camera.rotation.set(-player.pitch, -player.yaw, 0, 'YXZ');
+}
+
+// ---------------------------------------------------------------- UI
+const $ = (id) => document.getElementById(id);
+function bindRange(id, fn) {
+  const el = $(id), out = $(id + 'V');
+  const update = () => { out.textContent = Number(el.value).toFixed(Number(el.step) >= 1 ? 0 : 2); fn(Number(el.value)); };
+  el.addEventListener('input', update); update();
+}
+bindRange('refract', v => glassMat.uniforms.uRefract.value = v);
+bindRange('blur', v => glassMat.uniforms.uBlur.value = v);
+bindRange('scale', v => glassMat.uniforms.uScale.value = v);
+let distOffset = 0;
+bindRange('dist', v => distOffset = v);
+
+const SCENES = {
+  city:   { scene: city,  content: cityContent, exposure: 0.9,  glow: 0.18, amb: 0.035, env: 0.05, lamp: false, win: 110 },
+  plants: { scene: scene, content: plants,      exposure: 1.0,  glow: 0.04, amb: 0.12, env: 0.35, lamp: false, win: 14 },
+};
+let active = 'city';
+function setScene(name) {
+  if (!SCENES[name]) name = 'city';
+  active = name;
+  const S = SCENES[name];
+  renderer.toneMappingExposure = S.exposure;
+  glassMat.uniforms.uGlow.value = S.glow;
+  roomLights.amb.intensity = S.amb;
+  glassScene.environmentIntensity = S.env;
+  setLamp(S.lamp);
+  winCol.forEach(c => c.setRGB(0, 0, 0));
+  probeFrame = 0;
+  $('sCity').classList.toggle('on', name === 'city');
+  $('sPlants').classList.toggle('on', name === 'plants');
+  if (location.hash.slice(1) !== name) { try { history.replaceState(null, '', '#' + name); } catch (e) {} }
+}
+$('sCity').addEventListener('click', () => setScene('city'));
+$('sPlants').addEventListener('click', () => setScene('plants'));
+addEventListener('hashchange', () => setScene(location.hash.slice(1)));
+setScene(location.hash.slice(1) || 'city');
+$('wire').addEventListener('click', (ev) => {
+  const on = glassMat.uniforms.uWire.value < 0.5;
+  glassMat.uniforms.uWire.value = on ? 1 : 0;
+  ev.currentTarget.classList.toggle('on', on);
+});
+const peek = $('peek');
+const setGlass = (v) => { glassMat.uniforms.uGlass.value = v; peek.classList.toggle('on', v < 0.5); };
+peek.addEventListener('pointerdown', (e) => { e.preventDefault(); setGlass(0); });
+['pointerup', 'pointerleave', 'pointercancel'].forEach(t => peek.addEventListener(t, () => setGlass(1)));
+$('lampBtn').addEventListener('click', () => setLamp(!lampOn));
+$('howBtn').addEventListener('click', (ev) => {
+  const open = $('how').classList.toggle('open');
+  ev.currentTarget.classList.toggle('on', open);
+});
+
+// ---------------------------------------------------------------- resize / loop
+// ---------------------------------------------------------------- post: AO, tone mapping, a little vignette + grain
+const composer = new EffectComposer(renderer);
+composer.setPixelRatio(DPR);
+composer.addPass(new RenderPass(glassScene, camera));
+const gtao = new GTAOPass(glassScene, camera, innerWidth, innerHeight);
+gtao.output = GTAOPass.OUTPUT.Default;
+gtao.blendIntensity = 1.0;
+gtao.updateGtaoMaterial({ radius: 0.35, distanceExponent: 1.5, thickness: 1.0, scale: 1.2, samples: 12 });
+gtao.updatePdMaterial({ lumaPhi: 10, depthPhi: 2, normalPhi: 3, radius: 6, rings: 2, samples: 16 });
+composer.addPass(gtao);
+composer.addPass(new OutputPass());
+const filmPass = new ShaderPass({
+  uniforms: { tDiffuse: { value: null }, uTime: { value: 0 } },
+  vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+  fragmentShader: `
+    uniform sampler2D tDiffuse; uniform float uTime; varying vec2 vUv;
+    float h(vec2 p){ return fract(sin(dot(p, vec2(12.9898, 78.233)) + uTime) * 43758.5453); }
+    void main(){
+      vec3 c = texture2D(tDiffuse, vUv).rgb;
+      float v = smoothstep(1.05, 0.3, length(vUv - 0.5) * 1.15);
+      c *= mix(0.72, 1.0, v);
+      c += (h(gl_FragCoord.xy) - 0.5) * 0.018;
+      gl_FragColor = vec4(c, 1.0);
+    }`,
+});
+composer.addPass(filmPass);
+
+function resize() {
+  const w = innerWidth, h = innerHeight;
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+  const bw = Math.floor(w * DPR), bh = Math.floor(h * DPR);
+  rt.setSize(bw, bh);
+  composer.setSize(w, h);
+  glassMat.uniforms.uRes.value.set(bw, bh);
+}
+addEventListener('resize', resize);
+resize();
+
+const OUTSIDE_ONLY = [new THREE.Plane(new THREE.Vector3(0, 0, -1), -0.002)];
+const clock = new THREE.Clock();
+renderer.setAnimationLoop(() => {
+  const dt = Math.min(clock.getDelta(), 0.1);
+  const t = clock.elapsedTime;
+  timeUniform.value = t;
+  const S = SCENES[active];
+  S.content.position.z = -distOffset;
+  if (active === 'city') updateCity(t, dt);
+  for (const b of bushes) b.rotation.z = Math.sin(t * 0.5 + b.userData.phase) * 0.02;
+
+  updatePlayer(dt);
+
+  // the outside world only exists beyond the glass plane (z < 0): clip anything that would poke into the room
+  renderer.setRenderTarget(rt);
+  renderer.clippingPlanes = OUTSIDE_ONLY;
+  renderer.render(S.scene, camera);
+  renderer.clippingPlanes = [];
+  renderer.setRenderTarget(null);
+  if ((probeFrame++ % 6) === 0) updateProbe(S.scene, S.win);
+  filmPass.uniforms.uTime.value = t % 10;
+  composer.render(dt);
+});
+</script>
+</body>
+</html>

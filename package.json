@@ -1,0 +1,19 @@
+{
+  "name": "threejs-glass",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "網入り型板ガラス越しの景色を three.js のシェーダーで再現するデモ",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "sim:traffic": "node tools/traffic-sim.mjs index.html"
+  },
+  "dependencies": {
+    "three": "0.170.0"
+  },
+  "devDependencies": {
+    "vite": "^6.0.0"
+  }
+}
