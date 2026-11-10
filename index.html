@@ -1031,11 +1031,14 @@ function setLamp(on) {
   if (b) b.classList.toggle('on', on);
 }
 
-// environment for metal reflections (dimmed per scene)
+// environment for metal reflections only (dimmed per scene).
+// Not set as glassScene.environment: that would add IBL diffuse to every room
+// material, i.e. a light source other than the window and the ceiling lamp.
+const metalMats = [alu, aluDark];
 {
   const pmrem = new THREE.PMREMGenerator(renderer);
-  glassScene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-  glassScene.environmentIntensity = 0.1;
+  const envTex = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+  for (const m of metalMats) m.envMap = envTex;
 }
 
 // shadows for everything in the room except the glass
@@ -1150,7 +1153,7 @@ function setScene(name) {
   renderer.toneMappingExposure = S.exposure;
   glassMat.uniforms.uGlow.value = S.glow;
   roomLights.amb.intensity = S.amb;
-  glassScene.environmentIntensity = S.env;
+  for (const m of metalMats) m.envMapIntensity = S.env;
   setLamp(S.lamp);
   winCol.forEach(c => c.setRGB(0, 0, 0));
   probeFrame = 0;
